@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gorisint // OSINT</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #0a0a0a;
+    --panel2: #0f0f0f;
+    --line: #1a1a1a;
+    --line2: #2a2a2a;
+    --text: #fff;
+    --muted: #666;
+    --dim: #333;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.55;
+    font-size: 14px;
+    overflow-x: hidden;
+    position: relative;
+    cursor: crosshair;
+  }
+
+  /* === МАТРИЧНЫЙ ДОЖДЬ (canvas) === */
+  #matrix {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    opacity: 0.14;
+    pointer-events: none;
+  }
+
+  /* === ШУМ-ТЕКСТУРА === */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+    animation: noiseShift 0.3s steps(3) infinite;
+  }
+  @keyframes noiseShift {
+    0% { transform: translate(0,0); }
+    33% { transform: translate(-2px,1px); }
+    66% { transform: translate(1px,-2px); }
+    100% { transform: translate(0,0); }
+  }
+
+  /* === СКАНЛАЙН === */
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--text), transparent);
+    opacity: 0.5;
+    animation: scanline 5s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 100;
+    filter: blur(0.5px);
+  }
+  @keyframes scanline {
+    0%, 100% { transform: translateY(0) scaleX(0.2); opacity: 0.1; }
+    50% { transform: translateY(100vh) scaleX(1); opacity: 0.7; }
+  }
+
+  header, .search-area, main, footer { position: relative; z-index: 1; }
+
+  /* === HEADER === */
+  header {
+    border-bottom: 1px solid var(--line);
+    padding: 44px 24px 34px;
+    max-width: 1100px;
+    margin: 0 auto;
+    animation: fadeDown 0.8s cubic-bezier(.2,.7,.3,1) both;
+    position: relative;
+    overflow: hidden;
+  }
+  header::before {
+    content: "";
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.04), transparent);
+    animation: sweep 6s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes sweep {
+    0%, 100% { left: -100%; }
+    50% { left: 100%; }
+  }
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .hdr-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 26px;
+  }
+  .logo {
+    font-size: 24px;
+    letter-spacing: .15em;
+    text-transform: lowercase;
+    font-weight: 500;
+    transition: letter-spacing .5s cubic-bezier(.2,.7,.3,1), text-shadow .5s;
+    cursor: pointer;
+    user-select: none;
+  }
+  .logo:hover {
+    letter-spacing: .35em;
+    text-shadow: 0 0 20px rgba(255,255,255,.6), 0 0 40px rgba(255,255,255,.3);
+  }
+  .logo b { font-weight: 500; }
+  .logo .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    background: var(--text);
+    border-radius: 50%;
+    margin-left: 8px;
+    animation: pulse 2s ease-in-out infinite;
+    vertical-align: middle;
+    box-shadow: 0 0 10px rgba(255,255,255,.8);
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 10px rgba(255,255,255,.8); }
+    50% { opacity: 0.4; transform: scale(0.5); box-shadow: 0 0 3px rgba(255,255,255,.3); }
+  }
+  .meta-line {
+    font-size: 11.5px;
+    color: var(--dim);
+    letter-spacing: .1em;
+    animation: fadeIn 1s ease 0.3s both;
+  }
+
+  /* === ЗАГОЛОВОК С ГЛИТЧЕМ === */
+  h1 {
+    font-size: clamp(1.8rem, 4.5vw, 2.8rem);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin-bottom: 14px;
+    position: relative;
+    display: inline-block;
+  }
+  h1 .glitch {
+    position: relative;
+    display: inline-block;
+  }
+  h1 .glitch::before,
+  h1 .glitch::after {
+    content: attr(data-text);
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  h1 .glitch::before {
+    color: #fff;
+    animation: glitch1 3s infinite linear alternate-reverse;
+    clip-path: polygon(0 0, 100% 0, 100% 45%, 0 45%);
+    opacity: 0.15;
+  }
+  h1 .glitch::after {
+    color: #fff;
+    animation: glitch2 2.7s infinite linear alternate-reverse;
+    clip-path: polygon(0 55%, 100% 55%, 100% 100%, 0 100%);
+    opacity: 0.15;
+  }
+  @keyframes glitch1 {
+    0%, 90%, 100% { transform: translate(0); }
+    92% { transform: translate(-2px, 1px); }
+    94% { transform: translate(2px, -1px); }
+    96% { transform: translate(-1px, 2px); }
+    98% { transform: translate(1px, -2px); }
+  }
+  @keyframes glitch2 {
+    0%, 85%, 100% { transform: translate(0); }
+    87% { transform: translate(2px, -1px); }
+    89% { transform: translate(-2px, 1px); }
+    93% { transform: translate(1px, 2px); }
+    95% { transform: translate(-1px, -1px); }
+  }
+  h1 .cursor {
+    display: inline-block;
+    width: .5em;
+    height: .9em;
+    background: var(--text);
+    vertical-align: baseline;
+    margin-left: 4px;
+    animation: blink 1.1s step-end infinite;
+    box-shadow: 0 0 12px rgba(255,255,255,.5);
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  header p {
+    color: var(--muted);
+    max-width: 640px;
+    font-size: 13px;
+    animation: fadeIn 1s ease 0.4s both;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  /* === SEARCH === */
+  .search-area {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 28px 24px;
+    border-bottom: 1px solid var(--line);
+    animation: fadeDown 0.8s cubic-bezier(.2,.7,.3,1) 0.15s both;
+  }
+  .input-group {
+    display: flex;
+    border: 1px solid var(--line2);
+    background: var(--panel);
+    position: relative;
+    transition: border-color .3s, box-shadow .3s, transform .3s;
+  }
+  .input-group::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+    z-index: -1;
+    opacity: 0;
+    transition: opacity .3s;
+  }
+  .input-group:focus-within {
+    border-color: var(--text);
+    box-shadow: 0 0 0 4px rgba(255,255,255,.04), 0 0 40px rgba(255,255,255,.08);
+    transform: translateY(-1px);
+  }
+  .input-group:focus-within::before { opacity: 0.3; }
+  .input-group .prompt {
+    padding: 16px 0 16px 16px;
+    color: var(--dim);
+    user-select: none;
+    transition: color .3s;
+    animation: promptPulse 2s ease-in-out infinite;
+  }
+  @keyframes promptPulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  .input-group:focus-within .prompt { color: var(--text); animation: none; }
+  .input-group input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    padding: 16px 14px 16px 6px;
+    font-family: inherit;
+    font-size: 14px;
+    caret-color: var(--text);
+  }
+  .input-group input::placeholder { color: var(--dim); }
+  .input-group button {
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--line);
+    color: var(--text);
+    padding: 0 26px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 16px;
+    transition: background .2s, letter-spacing .3s;
+    position: relative;
+    overflow: hidden;
+  }
+  .input-group button::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--text);
+    transform: translateX(-100%);
+    transition: transform .35s cubic-bezier(.2,.7,.3,1);
+    z-index: -1;
+  }
+  .input-group button:hover { color: #000; letter-spacing: .2em; }
+  .input-group button:hover::before { transform: translateX(0); }
+  .input-group button:active { transform: scale(0.96); }
+
+  /* === TABS === */
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    margin-top: 14px;
+    border: 1px solid var(--line);
+    position: relative;
+    overflow: hidden;
+  }
+  .tabs button {
+    flex: 1;
+    min-width: 90px;
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--line);
+    color: var(--muted);
+    padding: 12px 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11.5px;
+    letter-spacing: .05em;
+    text-transform: lowercase;
+    transition: all .25s cubic-bezier(.2,.7,.3,1);
+    position: relative;
+    overflow: hidden;
+  }
+  .tabs button:last-child { border-right: none; }
+  .tabs button::before {
+    content: "";
+    position: absolute;
+    bottom: 0; left: 50%;
+    width: 0; height: 2px;
+    background: var(--text);
+    transition: all .35s cubic-bezier(.2,.7,.3,1);
+    transform: translateX(-50%);
+    box-shadow: 0 0 10px rgba(255,255,255,.6);
+  }
+  .tabs button:hover {
+    background: var(--panel);
+    color: var(--text);
+    letter-spacing: .1em;
+  }
+  .tabs button.active {
+    background: var(--panel);
+    color: var(--text);
+    font-weight: 500;
+  }
+  .tabs button.active::before { width: 100%; }
+
+  /* === MAIN === */
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 30px 24px 90px;
+  }
+
+  .result-block {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    margin-bottom: 18px;
+    animation: slideUp 0.5s cubic-bezier(.2,.7,.3,1) both;
+    position: relative;
+    overflow: hidden;
+  }
+  .result-block::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    width: 2px; height: 100%;
+    background: linear-gradient(180deg, transparent, var(--text), transparent);
+    transform: scaleY(0);
+    transform-origin: top;
+    animation: lineGrow 0.6s ease 0.2s both;
+  }
+  @keyframes lineGrow {
+    to { transform: scaleY(1); }
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); filter: blur(6px); }
+    to { opacity: 1; transform: translateY(0); filter: blur(0); }
+  }
+  .result-head {
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .result-head h2 {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: .08em;
+    text-transform: lowercase;
+    color: var(--muted);
+  }
+  .result-head .status {
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: .05em;
+  }
+  .result-body { padding: 22px; }
+  .result-body pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 12.5px;
+    color: var(--text);
+    line-height: 1.6;
+    font-family: inherit;
+  }
+
+  /* === DORK CARDS === */
+  .dork-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .dork {
+    border: 1px solid var(--line);
+    padding: 16px 18px;
+    background: var(--panel2);
+    transition: all .3s cubic-bezier(.2,.7,.3,1);
+    cursor: pointer;
+    text-decoration: none;
+    color: var(--text);
+    display: block;
+    position: relative;
+    overflow: hidden;
+    opacity: 0;
+    animation: cardIn 0.5s cubic-bezier(.2,.7,.3,1) both;
+  }
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(14px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .dork::before {
+    content: "";
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent);
+    transition: left .5s;
+  }
+  .dork:hover::before { left: 100%; }
+  .dork:hover {
+    border-color: var(--text);
+    background: #151515;
+    transform: translateY(-3px);
+    box-shadow: 0 8px 30px rgba(255,255,255,.06);
+  }
+  .dork h4 {
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: letter-spacing .3s;
+  }
+  .dork:hover h4 { letter-spacing: .05em; }
+  .dork h4::before {
+    content: "▸";
+    color: var(--dim);
+    transition: transform .3s, color .3s;
+  }
+  .dork:hover h4::before {
+    color: var(--text);
+    transform: translateX(3px);
+  }
+  .dork p {
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .dork::after {
+    content: "открыть →";
+    position: absolute;
+    bottom: 12px; right: 16px;
+    font-size: 10.5px;
+    color: var(--dim);
+    opacity: 0;
+    transition: opacity .3s, transform .3s, color .3s;
+    transform: translateX(-5px);
+  }
+  .dork:hover::after {
+    opacity: 1;
+    transform: translateX(0);
+    color: var(--text);
+  }
+
+  /* === EMPTY / LOADING === */
+  .empty, .loading {
+    color: var(--muted);
+    text-align: center;
+    padding: 70px 20px;
+    font-size: 13px;
+    animation: fadeIn 0.5s ease both;
+  }
+  .empty b {
+    color: var(--text);
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    font-size: 12px;
+  }
+  .loading::before {
+    content: "";
+    display: block;
+    width: 30px;
+    height: 30px;
+    margin: 0 auto 16px;
+    border: 1px solid var(--line2);
+    border-top-color: var(--text);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading::after {
+    content: "поиск";
+    letter-spacing: .2em;
+    animation: blink 1.2s step-end infinite;
+  }
+
+  /* === KV === */
+  .kv {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 10px 16px;
+    font-size: 12.5px;
+  }
+  .kv dt {
+    color: var(--muted);
+    transition: color .2s;
+  }
+  .kv dd {
+    color: var(--text);
+    word-break: break-word;
+    transition: color .2s;
+  }
+  .kv dt:hover, .kv dt:hover + dd { color: #fff; }
+  .kv dd a {
+    color: var(--text);
+    border-bottom: 1px solid var(--line2);
+    text-decoration: none;
+    transition: border-color .2s, letter-spacing .2s;
+  }
+  .kv dd a:hover {
+    border-bottom-color: var(--text);
+    letter-spacing: .03em;
+  }
+
+  /* === BADGES === */
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    padding: 3px 9px;
+    border: 1px solid var(--line2);
+    color: var(--muted);
+    margin-right: 6px;
+    margin-bottom: 4px;
+    transition: all .25s;
+    animation: fadeIn .4s ease both;
+  }
+  .badge:hover {
+    border-color: var(--text);
+    color: var(--text);
+    transform: translateY(-1px);
+    box-shadow: 0 0 12px rgba(255,255,255,.1);
+  }
+  .badge.warn {
+    border-color: var(--text);
+    color: var(--text);
+    animation: badgePulse 2s ease-in-out infinite;
+  }
+  @keyframes badgePulse {
+    0%, 100% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+    50% { box-shadow: 0 0 15px rgba(255,255,255,.15); }
+  }
+
+  /* === FOOTER === */
+  footer {
+    border-top: 1px solid var(--line);
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 26px 24px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 11.5px;
+    color: var(--dim);
+    letter-spacing: .06em;
+    position: relative;
+    z-index: 1;
+  }
+  footer a {
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px solid var(--line2);
+    transition: color .2s, border-color .2s;
+  }
+  footer a:hover { color: var(--text); border-bottom-color: var(--text); }
+
+  ::selection { background: var(--text); color: var(--bg); }
+
+  /* === SCROLLBAR === */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line2);
+    border: 2px solid var(--bg);
+    transition: background .2s;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* === TRAIL CURSOR === */
+  .trail {
+    position: fixed;
+    width: 4px; height: 4px;
+    background: var(--text);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.5;
+    transition: opacity .3s;
+    mix-blend-mode: difference;
+  }
+
+  @media(max-width: 640px) {
+    .tabs button { min-width: 70px; font-size: 10.5px; padding: 10px 4px; }
+    .kv { grid-template-columns: 120px 1fr; }
+    header { padding: 30px 18px 24px; }
+    .search-area { padding: 22px 18px; }
+    main { padding: 24px 18px 70px; }
+    .dork-grid { grid-template-columns: 1fr; }
+    .logo { font-size: 20px; }
+    .trail { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="matrix"></canvas>
+
+<header>
+  <div class="hdr-top">
+    <div class="logo"><b>gorisint</b><span class="dot"></span></div>
+    <div class="meta-line">v2.0 · public sources only</div>
+  </div>
+  <h1>
+    <span class="glitch" data-text="поиск по открытым источникам">поиск по открытым источникам</span><span class="cursor"></span>
+  </h1>
+  <p>Утечки, инфостилеры, домены, IP, username и Google Dorks — всё в одном интерфейсе. Только общедоступные данные.</p>
+</header>
+
+<div class="search-area">
+  <div class="input-group">
+    <span class="prompt">$</span>
+    <input type="text" id="query" placeholder="email, домен, ip, username, запрос для dorks..." autocomplete="off" spellcheck="false">
+    <button onclick="doSearch()">→</button>
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="active" data-type="breaches">утечки</button>
+    <button data-type="stealer">стилеры</button>
+    <button data-type="domain">домен</button>
+    <button data-type="ip">ip</button>
+    <button data-type="username">username</button>
+    <button data-type="dorks">dorks</button>
+  </div>
+</div>
+
+<main>
+  <div class="results" id="results">
+    <div class="empty"><b>введите запрос</b>выберите тип поиска выше и нажмите →</div>
+  </div>
+</main>
+
+<footer>
+  <div>gorisint · single-file · no-tracking</div>
+  <div>
+    <a href="https://osintframework.com" target="_blank" rel="noopener">osintframework</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/topics/osint" target="_blank" rel="noopener">github/osint</a>
+  </div>
+</footer>
+
+<script>
+/* ===== MATRIX RAIN ===== */
+(function(){
+  const canvas = document.getElementById('matrix');
+  const ctx = canvas.getContext('2d');
+  let w, h, cols, ypos;
+  const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789OSINT<>[]{}/*+#$%@'.split('');
+  const fontSize = 14;
+
+  function resize() {
+    w = canvas.width = window.innerWidth;
+    h = canvas.height = window.innerHeight;
+    cols = Math.floor(w / fontSize);
+    ypos = Array(cols).fill(1);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  function draw() {
+    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#fff';
+    ctx.font = fontSize + 'px monospace';
+    for (let i = 0; i < ypos.length; i++) {
+      const ch = chars[Math.floor(Math.random() * chars.length)];
+      ctx.fillText(ch, i * fontSize, ypos[i] * fontSize);
+      if (ypos[i] * fontSize > h && Math.random() > 0.975) ypos[i] = 0;
+      ypos[i]++;
+    }
+  }
+  setInterval(draw, 60);
+})();
+
+/* ===== TRAIL CURSOR ===== */
+(function(){
+  if (window.innerWidth < 640) return;
+  const trail = [];
+  const maxTrail = 8;
+  for (let i = 0; i < maxTrail; i++) {
+    const d = document.createElement('div');
+    d.className = 'trail';
+    d.style.opacity = (1 - i / maxTrail) * 0.4;
+    document.body.appendChild(d);
+    trail.push({ el: d, x: 0, y: 0 });
+  }
+  let mx = 0, my = 0;
+  document.addEventListener('mousemove', e => {
+    mx = e.clientX; my = e.clientY;
+  });
+  function loop() {
+    let px = mx, py = my;
+    trail.forEach((t, i) => {
+      t.x += (px - t.x) * 0.35;
+      t.y += (py - t.y) * 0.35;
+      t.el.style.left = (t.x - 2) + 'px';
+      t.el.style.top = (t.y - 2) + 'px';
+      px = t.x; py = t.y;
+    });
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
+
+/* ===== SEARCH LOGIC ===== */
+let currentType = 'breaches';
+
+document.querySelectorAll('#tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentType = btn.dataset.type;
+    document.getElementById('query').focus();
+  });
+});
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function renderKV(obj, prefix = '') {
+  if (!obj || typeof obj !== 'object') return '';
+  let html = '';
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === null || v === undefined || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+    let val;
+    if (typeof v === 'object') {
+      val = '<pre>' + esc(JSON.stringify(v, null, 2)) + '</pre>';
+    } else if (typeof v === 'string' && v.startsWith('http')) {
+      val = `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`;
+    } else {
+      val = esc(String(v));
+    }
+    html += `<dt>${esc(prefix + k)}</dt><dd>${val}</dd>`;
+  }
+  return html ? `<dl class="kv">${html}</dl>` : '';
+}
+
+function renderResult(type, query, data) {
+  if (!data || Object.keys(data).length === 0) {
+    return `<div class="result-block"><div class="result-head"><h2>${esc(type)} / ${esc(query)}</h2><span class="status">пусто</span></div><div class="result-body"><pre>нет данных</pre></div></div>`;
+  }
+
+  let body = '';
+
+  if (type === 'breaches') {
+    const breaches = data.breaches || data.breach_details || [];
+    body = `<div class="result-body">`;
+    if (Array.isArray(breaches) && breaches.length) {
+      body += `<div>${breaches.map(b => `<span class="badge warn">${esc(b)}</span>`).join('')}</div>`;
+    } else {
+      body += `<pre>${esc(JSON.stringify(data, null, 2))}</pre>`;
+    }
+    body += `</div>`;
+  } else if (type === 'stealer') {
+    body = `<div class="result-body"><pre>${esc(JSON.stringify(data, null, 2))}</pre></div>`;
+  } else if (type === 'domain') {
+    body = `<div class="result-body">
+      <div style="margin-bottom:16px"><span class="badge">whois</span></div>
+      ${renderKV(data.whois)}
+      <div style="margin:16px 0 8px"><span class="badge">dns</span></div>
+      <pre>${esc(data.dns || 'no dns data')}</pre>
+    </div>`;
+  } else if (type === 'ip') {
+    body = `<div class="result-body">
+      <div style="margin-bottom:16px"><span class="badge">geolocation</span></div>
+      ${renderKV(data.geo)}
+      <div style="margin:16px 0 8px"><span class="badge">security</span></div>
+      ${renderKV(data.security)}
+    </div>`;
+  } else if (type === 'username') {
+    if (!data.found) {
+      body = `<div class="result-body"><pre>user "${esc(query)}" not found on github</pre></div>`;
+    } else {
+      body = `<div class="result-body">${renderKV(data)}</div>`;
+    }
+  } else if (type === 'dorks') {
+    const list = data.dorks || [];
+    body = `<div class="result-body">
+      <div style="margin-bottom:16px;font-size:12px;color:var(--muted)">
+        <span class="badge">${list.length} dorks</span> для запроса: <b style="color:var(--text)">${esc(data.query)}</b>
+      </div>
+      <div class="dork-grid">
+        ${list.map((d, i) => `
+          <a class="dork" href="${esc(d.url)}" target="_blank" rel="noopener" style="animation-delay:${i * 0.04}s">
+            <h4>${esc(d.name)}</h4>
+            <p>${esc(d.desc)}</p>
+          </a>
+        `).join('')}
+      </div>
+    </div>`;
+  } else {
+    body = `<div class="result-body"><pre>${esc(JSON.stringify(data, null, 2))}</pre></div>`;
+  }
+
+  return `<div class="result-block">
+    <div class="result-head">
+      <h2>${esc(type)} / ${esc(query)}</h2>
+      <span class="status">${new Date().toLocaleTimeString()}</span>
+    </div>
+    ${body}
+  </div>`;
+}
+
+async function doSearch() {
+  const query = document.getElementById('query').value.trim();
+  const results = document.getElementById('results');
+
+  if (!query) {
+    results.innerHTML = '<div class="empty"><b>введите запрос</b></div>';
+    return;
+  }
+
+  results.innerHTML = '<div class="loading">поиск</div>';
+
+  let url;
+  switch (currentType) {
+    case 'breaches': url = `/api/breaches?email=${encodeURIComponent(query)}`; break;
+    case 'stealer':
+      url = query.includes('@')
+        ? `/api/stealer?email=${encodeURIComponent(query)}`
+        : `/api/stealer?domain=${encodeURIComponent(query)}`;
+      break;
+    case 'domain': url = `/api/domain?domain=${encodeURIComponent(query)}`; break;
+    case 'ip': url = `/api/ip?ip=${encodeURIComponent(query)}`; break;
+    case 'username': url = `/api/username?username=${encodeURIComponent(query)}`; break;
+    case 'dorks': url = `/api/dorks?query=${encodeURIComponent(query)}`; break;
+  }
+
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    results.innerHTML = renderResult(currentType, query, data);
+  } catch (err) {
+    results.innerHTML = `<div class="result-block"><div class="result-head"><h2>${esc(currentType)} / ${esc(query)}</h2><span class="status">ошибка</span></div><div class="result-body"><pre>${esc(err.message)}</pre></div></div>`;
+  }
+}
+
+document.getElementById('query').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doSearch();
+});
+
+/* ===== KONAMI-STYLE EASTER EGG ===== */
+let keys = [];
+document.addEventListener('keydown', e => {
+  keys.push(e.key.toLowerCase());
+  keys = keys.slice(-6);
+  if (keys.join('') === 'gorisi') {
+    document.body.style.animation = 'none';
+    document.body.offsetHeight;
+    document.body.style.animation = 'glitchAll 0.5s ease 3';
+  }
+});
+</script>
+
+<style>
+@keyframes glitchAll {
+  0%, 100% { filter: none; transform: translate(0); }
+  20% { filter: invert(1); transform: translate(-2px, 1px); }
+  40% { filter: hue-rotate(180deg); transform: translate(2px, -1px); }
+  60% { filter: invert(1); transform: translate(-1px, 2px); }
+  80% { filter: none; transform: translate(1px, -2px); }
+}
+</style>
+
+</body>
+</html>
